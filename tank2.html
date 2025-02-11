@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>坦克大战</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            touch-action: none; /* 禁用默认的触摸行为 */
+        }
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background-image: url('battlefield.jpg'); /* 请确保有一张名为 battlefield.jpg 的战地纹路图片 */
+            background-size: cover;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas {
+            background-color: transparent;
+            display: block;
+            /* 让canvas适应容器大小 */
+            width: 100%;
+            height: 100%;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px black;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 200px;
+            height: 200px;
+        }
+        .control-btn {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            background: rgba(255,255,255,0.5);
+            border-radius: 50%;
+            text-align: center;
+            line-height: 60px;
+            user-select: none;
+        }
+        #upBtn { left: 70px; top: 0; }
+        #downBtn { left: 70px; top: 140px; }
+        #leftBtn { left: 0; top: 70px; }
+        #rightBtn { left: 140px; top: 70px; }
+        #fireBtn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            background: rgba(255,0,0,0.5);
+            border-radius: 50%;
+            text-align: center;
+            line-height: 80px;
+            user-select: none;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        #startMenu, #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+        }
+        #startMenu button, #gameOver button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 18px;
+            border: none;
+            border-radius: 5px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+        }
+        #score, #ammo, #health, #timer {
+            font-size: 18px;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui">
+            <div id="startMenu">
+                <h2>选择难度</h2>
+                <div id="difficultyMenu">
+                    <button onclick="startGame('easy')">简单</button>
+                    <button onclick="startGame('normal')">普通</button>
+                    <button onclick="startGame('hard')">困难</button>
+                </div>
+            </div>
+            <div id="gameInfo">
+                <span id="score">得分：0</span>
+                <span id="ammo">弹药：10</span>
+                <span id="health">生命：3</span>
+                <span id="timer">时间：60</span>
+            </div>
+            <div id="gameOver">
+                <h2 id="result"></h2>
+                <p id="finalScore"></p>
+                <button onclick="showStartMenu()">重新开始</button>
+            </div>
+        </div>
+        <!-- 控制按钮 -->
+        <div id="controls">
+            <div id="upBtn" class="control-btn">↑</div>
+            <div id="downBtn" class="control-btn">↓</div>
+            <div id="leftBtn" class="control-btn">←</div>
+            <div id="rightBtn" class="control-btn">→</div>
+        </div>
+        <div id="fireBtn">发射</div>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let tankImg = new Image();
+        tankImg.src = 'tank.png'; // 请确保有一张名为 tank.png 的坦克图片，默认炮口向右
+
+        let turretImg = new Image();
+        turretImg.src = 'turret.png'; // 请确保有一张名为 turret.png 的炮台图片，默认炮口向右
+
+        let obstacleImg = new Image();
+        obstacleImg.src = 'obstacle.png'; // 请确保有一张名为 obstacle.png 的障碍物图片
+
+        let bulletImg = new Image();
+        bulletImg.src = 'bullet.png'; // 请确保有一张名为 bullet.png 的炮弹图片
+
+        let enemyBulletImg = new Image();
+        enemyBulletImg.src = 'enemy_bullet.png'; // 敌方炮弹图片
+
+        let tank = {
+            x: 400,
+            y: 550,
+            width: 40,
+            height: 40,
+            speed: 3,
+            health: 3,
+            ammo: 10,
+            angle: -Math.PI / 2, // 初始角度，默认向上
+            bullets: []
+        };
+
+        let turrets = [];
+        let obstacles = [];
+        let enemyBullets = [];
+        let keys = {};
+        let score = 0;
+        let timer = 60;
+        let gameInterval;
+        let countdownInterval;
+        let difficultySettings = {
+            easy: { time: 90, turretCount: 3 },
+            normal: { time: 60, turretCount: 5 },
+            hard: { time: 45, turretCount: 7 }
+        };
+        let gameDifficulty = 'normal';
+        let lastTime = 0;
+
+        function startGame(difficulty) {
+            gameDifficulty = difficulty;
+            resetGame();
+            document.getElementById('startMenu').style.display = 'none';
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('gameInfo').style.display = 'block';
+            lastTime = performance.now();
+            gameLoop();
+            countdownInterval = setInterval(countdown, 1000);
+        }
+
+        function resetGame() {
+            // 重置游戏状态
+            resizeCanvas();
+            tank.x = canvas.width / 2;
+            tank.y = canvas.height - 60;
+            tank.health = 3;
+            tank.ammo = 10;
+            tank.bullets = [];
+            tank.angle = -Math.PI / 2; // 重置角度，向上
+            enemyBullets = [];
+            score = 0;
+            timer = difficultySettings[gameDifficulty].time;
+            turrets = generateTurrets(difficultySettings[gameDifficulty].turretCount);
+            obstacles = generateObstacles(10);
+            updateUI();
+        }
+
+        function showStartMenu() {
+            document.getElementById('startMenu').style.display = 'block';
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('gameInfo').style.display = 'none';
+        }
+
+        function gameLoop(now) {
+            let deltaTime = (now - lastTime) / 1000;
+            lastTime = now;
+
+            update(deltaTime);
+            draw();
+            checkGameOver();
+
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function update(deltaTime) {
+            // 坦克移动
+            if (keys['ArrowUp']) moveTank('up', deltaTime);
+            if (keys['ArrowDown']) moveTank('down', deltaTime);
+            if (keys['ArrowLeft']) moveTank('left', deltaTime);
+            if (keys['ArrowRight']) moveTank('right', deltaTime);
+
+            // 更新坦克炮弹
+            tank.bullets.forEach((bullet, index) => {
+                bullet.x += bullet.vx * deltaTime * 60;
+                bullet.y += bullet.vy * deltaTime * 60;
+
+                if (isCollidingWithObstacles(bullet) || bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    tank.bullets.splice(index, 1);
+                } else {
+                    turrets.forEach((turret, tIndex) => {
+                        if (isColliding(bullet, turret)) {
+                            tank.bullets.splice(index, 1);
+                            turrets.splice(tIndex, 1);
+                            score += 10;
+                            updateUI();
+                        }
+                    });
+                }
+            });
+
+            // 更新敌方炮弹
+            enemyBullets.forEach((bullet, index) => {
+                bullet.x += bullet.vx * deltaTime * 60;
+                bullet.y += bullet.vy * deltaTime * 60;
+                if (isCollidingWithObstacles(bullet) || bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    enemyBullets.splice(index, 1);
+                } else if (isColliding(bullet, tank)) {
+                    enemyBullets.splice(index, 1);
+                    tank.health--;
+                    updateUI();
+                }
+            });
+
+            // 敌人射击
+            enemyFire(deltaTime);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制障碍物
+            obstacles.forEach(obstacle => {
+                ctx.drawImage(obstacleImg, obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            });
+
+            // 绘制坦克
+            drawRotatedImage(tankImg, tank.x, tank.y, tank.width, tank.height, tank.angle);
+
+            // 绘制敌方炮台
+            turrets.forEach(turret => {
+                // 计算炮台指向坦克的角度
+                let dx = tank.x - turret.x;
+                let dy = tank.y - turret.y;
+                turret.angle = Math.atan2(dy, dx);
+
+                drawRotatedImage(turretImg, turret.x, turret.y, turret.width, turret.height, turret.angle);
+            });
+
+            // 绘制坦克炮弹
+            tank.bullets.forEach(bullet => {
+                ctx.drawImage(bulletImg, bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+
+            // 绘制敌方炮弹
+            enemyBullets.forEach(bullet => {
+                ctx.drawImage(enemyBulletImg, bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+        }
+
+        function moveTank(direction, deltaTime) {
+            let prevX = tank.x;
+            let prevY = tank.y;
+            let distance = tank.speed * deltaTime * 60;
+
+            if (direction === 'up') {
+                tank.y -= distance;
+                tank.angle = -Math.PI / 2; // 向上
+            }
+            if (direction === 'down') {
+                tank.y += distance;
+                tank.angle = Math.PI / 2; // 向下
+            }
+            if (direction === 'left') {
+                tank.x -= distance;
+                tank.angle = Math.PI; // 向左
+            }
+            if (direction === 'right') {
+                tank.x += distance;
+                tank.angle = 0; // 向右
+            }
+
+            if (isCollidingWithObstacles(tank) || isOutOfBounds(tank)) {
+                tank.x = prevX;
+                tank.y = prevY;
+            }
+        }
+
+        function fireBullet() {
+            if (tank.ammo > 0) {
+                let speed = 5;
+                let vx = Math.cos(tank.angle) * speed;
+                let vy = Math.sin(tank.angle) * speed;
+                let bullet = {
+                    x: tank.x + tank.width / 2 - 5 + vx * 5, // 炮管前端位置
+                    y: tank.y + tank.height / 2 - 5 + vy * 5,
+                    width: 10,
+                    height: 10,
+                    vx: vx,
+                    vy: vy
+                };
+                if (!isCollidingWithObstacles(bullet)) {
+                    tank.bullets.push(bullet);
+                    tank.ammo--;
+                    updateUI();
+                }
+            }
+        }
+
+        let enemyFireCooldown = 0;
+        function enemyFire(deltaTime) {
+            enemyFireCooldown -= deltaTime;
+            if (enemyFireCooldown <= 0) {
+                enemyFireCooldown = 1; // 每秒发射一次
+                turrets.forEach(turret => {
+                    let dx = tank.x - turret.x;
+                    let dy = tank.y - turret.y;
+                    let angle = Math.atan2(dy, dx);
+                    let speed = 3;
+                    let vx = Math.cos(angle) * speed;
+                    let vy = Math.sin(angle) * speed;
+
+                    let bullet = {
+                        x: turret.x + turret.width / 2 - 5 + vx * 5, // 炮管前端位置
+                        y: turret.y + turret.height / 2 - 5 + vy * 5,
+                        width: 10,
+                        height: 10,
+                        vx: vx,
+                        vy: vy
+                    };
+                    enemyBullets.push(bullet);
+                });
+            }
+        }
+
+        function isColliding(a, b) {
+            return a.x < b.x + b.width &&
+                   a.x + a.width > b.x &&
+                   a.y < b.y + b.height &&
+                   a.y + a.height > b.y;
+        }
+
+        function isCollidingWithObstacles(obj) {
+            for (let obstacle of obstacles) {
+                if (isColliding(obj, obstacle)) return true;
+            }
+            return false;
+        }
+
+        function isOutOfBounds(obj) {
+            return obj.x < 0 || obj.x + obj.width > canvas.width || obj.y < 0 || obj.y + obj.height > canvas.height;
+        }
+
+        function generateTurrets(count) {
+            let turrets = [];
+            for (let i = 0; i < count; i++) {
+                let turret = {
+                    x: Math.random() * (canvas.width - 40),
+                    y: Math.random() * (canvas.height / 2),
+                    width: 40,
+                    height: 40,
+                    angle: 0 // 初始角度
+                };
+                turrets.push(turret);
+            }
+            return turrets;
+        }
+
+        function generateObstacles(count) {
+            let obstacles = [];
+            for (let i = 0; i < count; i++) {
+                let obstacle = {
+                    x: Math.random() * (canvas.width - 50),
+                    y: Math.random() * (canvas.height - 50),
+                    width: 50,
+                    height: 50
+                };
+
+                // 确保障碍物不与坦克和炮台重叠
+                if (isColliding(obstacle, tank)) {
+                    i--;
+                    continue;
+                }
+                let overlapping = false;
+                for (let turret of turrets) {
+                    if (isColliding(obstacle, turret)) {
+                        overlapping = true;
+                        break;
+                    }
+                }
+                if (overlapping) {
+                    i--;
+                    continue;
+                }
+
+                obstacles.push(obstacle);
+            }
+            return obstacles;
+        }
+
+        function drawRotatedImage(image, x, y, width, height, angle) {
+            ctx.save();
+            ctx.translate(x + width / 2, y + height / 2);
+            ctx.rotate(angle);
+            ctx.drawImage(image, -width / 2, -height / 2, width, height);
+            ctx.restore();
+        }
+
+        function updateUI() {
+            document.getElementById('score').textContent = '得分：' + score;
+            document.getElementById('ammo').textContent = '弹药：' + tank.ammo;
+            document.getElementById('health').textContent = '生命：' + tank.health;
+            document.getElementById('timer').textContent = '时间：' + timer;
+        }
+
+        let gameOver = false;
+        function checkGameOver() {
+            if (gameOver) return;
+            if (tank.health <= 0 || timer <= 0) {
+                gameOver = true;
+                clearInterval(countdownInterval);
+                document.getElementById('result').textContent = '游戏失败';
+                document.getElementById('finalScore').textContent = '最终得分：' + score;
+                document.getElementById('gameOver').style.display = 'block';
+            } else if (turrets.length === 0) {
+                gameOver = true;
+                clearInterval(countdownInterval);
+                document.getElementById('result').textContent = '游戏胜利';
+                document.getElementById('finalScore').textContent = '最终得分：' + score;
+                document.getElementById('gameOver').style.display = 'block';
+            }
+        }
+
+        function countdown() {
+            timer--;
+            updateUI();
+            if (timer <= 0) {
+                checkGameOver();
+            }
+        }
+
+        // 触摸控制
+        let controlButtons = {
+            up: document.getElementById('upBtn'),
+            down: document.getElementById('downBtn'),
+            left: document.getElementById('leftBtn'),
+            right: document.getElementById('rightBtn'),
+            fire: document.getElementById('fireBtn')
+        };
+
+        function addTouchEvent(button, key) {
+            button.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                keys[key] = true;
+            });
+            button.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                keys[key] = false;
+            });
+            button.addEventListener('touchcancel', (e) => {
+                e.preventDefault();
+                keys[key] = false;
+            });
+        }
+        addTouchEvent(controlButtons.up, 'ArrowUp');
+        addTouchEvent(controlButtons.down, 'ArrowDown');
+        addTouchEvent(controlButtons.left, 'ArrowLeft');
+        addTouchEvent(controlButtons.right, 'ArrowRight');
+
+        // 发射按钮
+        controlButtons.fire.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            fireBullet();
+        });
+
+        // 键盘控制（兼容PC端）
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ') {
+                fireBullet();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // 自适应画布
+        function resizeCanvas() {
+            canvas.width = document.getElementById('gameContainer').clientWidth;
+            canvas.height = document.getElementById('gameContainer').clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        window.onload = function() {
+            document.getElementById('startMenu').style.display = 'block';
+            resizeCanvas();
+        };
+    </script>
+</body>
+</html>

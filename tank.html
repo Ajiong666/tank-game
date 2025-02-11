@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>坦克大战</title>
+    <style>
+        canvas {
+            background-image: url('battlefield.jpg'); /* 确保有一张名为 battlefield.jpg 的战地纹路图片 */
+            display: block;
+            margin: 0 auto;
+            border: 1px solid #000;
+        }
+        #ui {
+            text-align: center;
+            margin-top: 10px;
+        }
+        #startMenu {
+            display: none;
+        }
+        #gameOver {
+            display: none;
+        }
+        #difficultyMenu button {
+            margin: 5px;
+        }
+        #score, #ammo, #health, #timer {
+            font-size: 18px;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="ui">
+        <div id="startMenu">
+            <h2>选择难度</h2>
+            <div id="difficultyMenu">
+                <button onclick="startGame('easy')">简单</button>
+                <button onclick="startGame('normal')">普通</button>
+                <button onclick="startGame('hard')">困难</button>
+            </div>
+        </div>
+        <div id="gameInfo">
+            <span id="score">得分：0</span>
+            <span id="ammo">弹药：10</span>
+            <span id="health">生命：3</span>
+            <span id="timer">时间：60</span>
+        </div>
+        <div id="gameOver">
+            <h2 id="result"></h2>
+            <p id="finalScore"></p>
+            <button onclick="showStartMenu()">重新开始</button>
+        </div>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let tankImg = new Image();
+        tankImg.src = 'tank.png'; // 确保有一张名为 tank.png 的坦克图片，默认炮口向右
+
+        let turretImg = new Image();
+        turretImg.src = 'turret.png'; // 确保有一张名为 turret.png 的炮台图片，默认炮口向右
+
+        let obstacleImg = new Image();
+        obstacleImg.src = 'obstacle.png'; // 确保有一张名为 obstacle.png 的障碍物图片
+
+        let bulletImg = new Image();
+        bulletImg.src = 'bullet.png'; // 确保有一张名为 bullet.png 的炮弹图片
+
+        let enemyBulletImg = new Image();
+        enemyBulletImg.src = 'enemy_bullet.png'; // 敌方炮弹图片
+
+        let tank = {
+            x: 400,
+            y: 550,
+            width: 40,
+            height: 40,
+            speed: 3,
+            health: 3,
+            ammo: 10,
+            angle: -Math.PI / 2, // 初始角度，默认向上
+            bullets: []
+        };
+
+        let turrets = [];
+        let obstacles = [];
+        let enemyBullets = [];
+        let keys = {};
+        let score = 0;
+        let timer = 60;
+        let gameInterval;
+        let enemyFireInterval;
+        let countdownInterval;
+        let difficultySettings = {
+            easy: { time: 90, turretCount: 3 },
+            normal: { time: 60, turretCount: 5 },
+            hard: { time: 45, turretCount: 7 }
+        };
+        let gameDifficulty = 'normal';
+
+        function startGame(difficulty) {
+            gameDifficulty = difficulty;
+            resetGame();
+            document.getElementById('startMenu').style.display = 'none';
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('gameInfo').style.display = 'block';
+            gameInterval = setInterval(gameLoop, 1000 / 60);
+            enemyFireInterval = setInterval(enemyFire, 1000);
+            countdownInterval = setInterval(countdown, 1000);
+        }
+
+        function resetGame() {
+            // 重置游戏状态
+            tank.x = 400;
+            tank.y = 550;
+            tank.health = 3;
+            tank.ammo = 10;
+            tank.bullets = [];
+            tank.angle = -Math.PI / 2; // 重置角度，向上
+            enemyBullets = [];
+            score = 0;
+            timer = difficultySettings[gameDifficulty].time;
+            turrets = generateTurrets(difficultySettings[gameDifficulty].turretCount);
+            obstacles = generateObstacles(10);
+            updateUI();
+        }
+
+        function showStartMenu() {
+            document.getElementById('startMenu').style.display = 'block';
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('gameInfo').style.display = 'none';
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            checkGameOver();
+        }
+
+        function update() {
+            // 坦克移动
+            if (keys['ArrowUp']) moveTank('up');
+            if (keys['ArrowDown']) moveTank('down');
+            if (keys['ArrowLeft']) moveTank('left');
+            if (keys['ArrowRight']) moveTank('right');
+
+            // 更新坦克炮弹
+            tank.bullets.forEach((bullet, index) => {
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+
+                if (isCollidingWithObstacles(bullet) || bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    tank.bullets.splice(index, 1);
+                } else {
+                    turrets.forEach((turret, tIndex) => {
+                        if (isColliding(bullet, turret)) {
+                            tank.bullets.splice(index, 1);
+                            turrets.splice(tIndex, 1);
+                            score += 10;
+                            updateUI();
+                        }
+                    });
+                }
+            });
+
+            // 更新敌方炮弹
+            enemyBullets.forEach((bullet, index) => {
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+                if (isCollidingWithObstacles(bullet) || bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    enemyBullets.splice(index, 1);
+                } else if (isColliding(bullet, tank)) {
+                    enemyBullets.splice(index, 1);
+                    tank.health--;
+                    updateUI();
+                }
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制障碍物
+            obstacles.forEach(obstacle => {
+                ctx.drawImage(obstacleImg, obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            });
+
+            // 绘制坦克
+            drawRotatedImage(tankImg, tank.x, tank.y, tank.width, tank.height, tank.angle);
+
+            // 绘制敌方炮台
+            turrets.forEach(turret => {
+                // 计算炮台指向坦克的角度
+                let dx = tank.x - turret.x;
+                let dy = tank.y - turret.y;
+                turret.angle = Math.atan2(dy, dx);
+
+                drawRotatedImage(turretImg, turret.x, turret.y, turret.width, turret.height, turret.angle);
+            });
+
+            // 绘制坦克炮弹
+            tank.bullets.forEach(bullet => {
+                ctx.drawImage(bulletImg, bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+
+            // 绘制敌方炮弹
+            enemyBullets.forEach(bullet => {
+                ctx.drawImage(enemyBulletImg, bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+        }
+
+        function moveTank(direction) {
+            let prevX = tank.x;
+            let prevY = tank.y;
+            let angleChanged = false;
+
+            if (direction === 'up') {
+                tank.y -= tank.speed;
+                tank.angle = -Math.PI / 2; // 向上
+                angleChanged = true;
+            }
+            if (direction === 'down') {
+                tank.y += tank.speed;
+                tank.angle = Math.PI / 2; // 向下
+                angleChanged = true;
+            }
+            if (direction === 'left') {
+                tank.x -= tank.speed;
+                tank.angle = Math.PI; // 向左
+                angleChanged = true;
+            }
+            if (direction === 'right') {
+                tank.x += tank.speed;
+                tank.angle = 0; // 向右
+                angleChanged = true;
+            }
+
+            if (isCollidingWithObstacles(tank) || isOutOfBounds(tank)) {
+                tank.x = prevX;
+                tank.y = prevY;
+            }
+        }
+
+        function fireBullet() {
+            if (tank.ammo > 0) {
+                let speed = 5;
+                let vx = Math.cos(tank.angle) * speed;
+                let vy = Math.sin(tank.angle) * speed;
+                let bullet = {
+                    x: tank.x + tank.width / 2 - 5 + vx * 5, // 炮管前端位置
+                    y: tank.y + tank.height / 2 - 5 + vy * 5,
+                    width: 10,
+                    height: 10,
+                    vx: vx,
+                    vy: vy
+                };
+                if (!isCollidingWithObstacles(bullet)) {
+                    tank.bullets.push(bullet);
+                    tank.ammo--;
+                    updateUI();
+                }
+            }
+        }
+
+        function enemyFire() {
+            turrets.forEach(turret => {
+                let dx = tank.x - turret.x;
+                let dy = tank.y - turret.y;
+                let angle = Math.atan2(dy, dx);
+                let speed = 3;
+                let vx = Math.cos(angle) * speed;
+                let vy = Math.sin(angle) * speed;
+
+                let bullet = {
+                    x: turret.x + turret.width / 2 - 5 + vx * 5, // 炮管前端位置
+                    y: turret.y + turret.height / 2 - 5 + vy * 5,
+                    width: 10,
+                    height: 10,
+                    vx: vx,
+                    vy: vy
+                };
+                enemyBullets.push(bullet);
+            });
+        }
+
+        function isColliding(a, b) {
+            return a.x < b.x + b.width &&
+                   a.x + a.width > b.x &&
+                   a.y < b.y + b.height &&
+                   a.y + a.height > b.y;
+        }
+
+        function isCollidingWithObstacles(obj) {
+            for (let obstacle of obstacles) {
+                if (isColliding(obj, obstacle)) return true;
+            }
+            return false;
+        }
+
+        function isOutOfBounds(obj) {
+            return obj.x < 0 || obj.x + obj.width > canvas.width || obj.y < 0 || obj.y + obj.height > canvas.height;
+        }
+
+        function generateTurrets(count) {
+            let turrets = [];
+            for (let i = 0; i < count; i++) {
+                let turret = {
+                    x: Math.random() * (canvas.width - 40),
+                    y: Math.random() * (canvas.height / 2),
+                    width: 40,
+                    height: 40,
+                    angle: 0 // 初始角度
+                };
+                turrets.push(turret);
+            }
+            return turrets;
+        }
+
+        function generateObstacles(count) {
+            let obstacles = [];
+            for (let i = 0; i < count; i++) {
+                let obstacle = {
+                    x: Math.random() * (canvas.width - 50),
+                    y: Math.random() * (canvas.height - 50),
+                    width: 50,
+                    height: 50
+                };
+
+                // 确保障碍物不与坦克和炮台重叠
+                if (isColliding(obstacle, tank)) {
+                    i--;
+                    continue;
+                }
+                let overlapping = false;
+                for (let turret of turrets) {
+                    if (isColliding(obstacle, turret)) {
+                        overlapping = true;
+                        break;
+                    }
+                }
+                if (overlapping) {
+                    i--;
+                    continue;
+                }
+
+                obstacles.push(obstacle);
+            }
+            return obstacles;
+        }
+
+        function drawRotatedImage(image, x, y, width, height, angle) {
+            ctx.save();
+            ctx.translate(x + width / 2, y + height / 2);
+            ctx.rotate(angle);
+            ctx.drawImage(image, -width / 2, -height / 2, width, height);
+            ctx.restore();
+        }
+
+        function updateUI() {
+            document.getElementById('score').textContent = '得分：' + score;
+            document.getElementById('ammo').textContent = '弹药：' + tank.ammo;
+            document.getElementById('health').textContent = '生命：' + tank.health;
+            document.getElementById('timer').textContent = '时间：' + timer;
+        }
+
+        function checkGameOver() {
+            if (tank.health <= 0 || timer <= 0) {
+                clearInterval(gameInterval);
+                clearInterval(enemyFireInterval);
+                clearInterval(countdownInterval);
+                document.getElementById('result').textContent = '游戏失败';
+                document.getElementById('finalScore').textContent = '最终得分：' + score;
+                document.getElementById('gameOver').style.display = 'block';
+            } else if (turrets.length === 0) {
+                clearInterval(gameInterval);
+                clearInterval(enemyFireInterval);
+                clearInterval(countdownInterval);
+                document.getElementById('result').textContent = '游戏胜利';
+                document.getElementById('finalScore').textContent = '最终得分：' + score;
+                document.getElementById('gameOver').style.display = 'block';
+            }
+        }
+
+        function countdown() {
+            timer--;
+            updateUI();
+            if (timer <= 0) {
+                checkGameOver();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ') {
+                fireBullet();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        window.onload = function() {
+            document.getElementById('startMenu').style.display = 'block';
+        };
+    </script>
+</body>
+</html>
